@@ -14,6 +14,18 @@ It replaces the vendor daemon `glgps_intelx86android` for the *initialisation* p
 GNSS measurement, satellite tracking and NMEA generation are **out of scope**: after the mode
 switch the receiver streams GLME frames, and a separate program has to speak that protocol.
 
+## Related work
+
+| what | where |
+| --- | --- |
+| the device-side port this daemon was written for (kernel, firmware, notes) | a private tree on the author's machine, not published |
+| hardware check suite for the same tablet | https://github.com/mbicz/yogabook-hardware-check |
+| the stock vendor daemon this replaces | `glgps_intelx86android`, extracted from your own ROM — see below |
+
+This daemon was developed against the Lenovo Yoga Book YB1-X90F (Cherry Trail, `BCM4752:00` on
+`/dev/ttyS2`). Nothing in it is tablet-specific except the default port path and the rfkill type, both of
+which are options.
+
 ## Provenance and legal position
 
 This is an **independent reimplementation of the wire protocol**, written from black-box analysis of
@@ -155,6 +167,57 @@ Options:
 
 `--dump-plan` is the hardware-free verification path: its output is byte-comparable with a
 capture of the vendor daemon, and `make plan PATCH=bcm4752-patch.bin` runs it for you.
+
+## Install and run
+
+```sh
+sudo make install                      # /usr/local/sbin/bcm4752-init
+sudo bcm4752-init --patch /etc/bcm4752-patch.bin
+```
+
+It is a one-shot program: it powers the receiver, runs the SEC/BRI handshake, uploads the RAM patch,
+switches the receiver to GLME mode, and exits with 0 when every step was acknowledged and 1 otherwise.
+It prints the patch pieces and a summary, or every frame with `--verbose`. It needs root because it writes `/dev/rfkill` and the serial port, and it holds nothing open
+afterwards.
+
+Two exit behaviours matter if a measurement client follows:
+
+- by default the rfkill switch is left **soft-blocked** again, which is what the vendor daemon does on exit and
+  which powers the receiver down;
+- with `--no-rfkill-restore` the switch is left soft-unblocked, so the receiver stays powered for a client that
+  speaks GLME afterwards. Verified on hardware: initialisation completes and the switch reads `soft=0` afterwards
+  (`state` is not a reliable readback here — it can read 1 while the switch is unblocked).
+
+Run the daemon before whatever consumes the receiver:
+it must not race another process for `/dev/ttyS2`.
+
+## Capture a vendor run for `make test`
+
+The comparison test needs a capture of the *vendor* daemon talking to the receiver on your own device. The vendor
+daemon is launched by the ROM's own service, so trace it where it runs — under a chroot from the stock image it is:
+
+```sh
+sudo strace -f -tt -yy -xx -s 65536 -e trace=read,write \
+    -o capture.log python3 run_gps.py android-gps-final --seconds 20 --output gps.nmea
+make test TRACE=capture.log PATCH=bcm4752-patch.bin
+```
+
+`-xx` is required: the trace must show the raw bytes. `-yy` annotates each file descriptor; the GPS port is
+recognised either as the device (`<char 4:66>`) or, when the tracee runs inside a chroot where strace cannot
+resolve the device, by its `/dev/ttyS2` path. A parsed JSON capture (`[{"sys": "write", "hex": ...}, ...]`) works
+as well.
+
+What the four checks mean, and what to expect from a fresh capture:
+
+| check | expectation |
+| --- | --- |
+| 1. planned bytes == captured bytes | passes against the capture this implementation was verified with; a fresh run can differ, because the vendor daemon retransmits a data block when the receiver does not acknowledge it |
+| 2. planned frames tile the captured `write()` calls | passes |
+| 3. every receiver reply the daemon expects appears in order | passes |
+| 4. acknowledgement frames | passes |
+
+So checks 2–4 are the structural ones and must stay green; a red check 1 on a fresh capture is the vendor daemon's
+retransmission, not a framing error.
 
 ## Verification
 

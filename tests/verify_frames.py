@@ -43,6 +43,17 @@ def unescape(s):
     return bytes(out)
 
 
+def is_gps_fd(annotation):
+    """True if a strace fd annotation refers to the GPS UART.
+
+    strace -yy normally appends the device, ``<char 4:66>``, but when the tracee
+    runs in a chroot it only reports the path, so ``/dev/ttyS2`` is accepted too.
+    """
+    if FD_GPS in annotation:
+        return True
+    return unescape(annotation).endswith(b"/ttyS2")
+
+
 def trace_io(path):
     """Return (writes, reads) as lists of byte strings."""
     if path.endswith(".json"):
@@ -57,7 +68,7 @@ def trace_io(path):
     call = re.compile(r'^\d+\s+[\d:.]+ (read|write)\((\d+)<([^>]*)>, "(.*?)", (\d+)\) = (\d+)\s*$')
     for line in open(path, errors="replace"):
         m = call.match(line.rstrip("\n"))
-        if not m or FD_GPS not in m.group(3):
+        if not m or not is_gps_fd(m.group(3)):
             continue
         data = unescape(m.group(4))
         if len(data) != int(m.group(6)):

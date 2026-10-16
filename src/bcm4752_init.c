@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -411,6 +412,7 @@ static int opt_timeout_ms = 1000;
 static int opt_hold_ms = 0;
 static int opt_burst = 16;
 static int opt_skip_autobaud = 0;
+static int opt_modem_lines = 0;
 static int opt_no_power = 0;
 
 static int find_gps_rfkill(void)
@@ -484,6 +486,12 @@ static void configure_tty(int fd)
     if (tcsetattr(fd, TCSANOW, &tio) < 0)
         die("tcsetattr: %s", strerror(errno));
     tcflush(fd, TCIOFLUSH);
+    if (opt_modem_lines) {
+        int bits = TIOCM_RTS | TIOCM_DTR;
+        if (ioctl(fd, TIOCMBIS, &bits) < 0)
+            die("TIOCMBIS: %s", strerror(errno));
+        logv("modem lines: RTS and DTR asserted");
+    }
 }
 
 /* ------------------------------------------------------------- sequence */
@@ -607,6 +615,7 @@ static void usage(void)
             "  --hold MS         keep reading after the mode switch\n"
             "  --burst N         bytes of 0x80 in the autobaud burst (default 16)\n"
             "  --skip-autobaud   do not send the autobaud sync frame\n"
+            "  --modem-lines     assert RTS and DTR explicitly\n"
             "  --dump-plan       print the frames and exit; touch no hardware\n"
             "  --verbose         log every frame\n"
             "  --version         print version\n",
@@ -647,6 +656,8 @@ int main(int argc, char **argv)
             opt_no_power = 1;
         } else if (strcmp(a, "--skip-autobaud") == 0) {
             opt_skip_autobaud = 1;
+        } else if (strcmp(a, "--modem-lines") == 0) {
+            opt_modem_lines = 1;
         } else if (strcmp(a, "--dump-plan") == 0) {
             plan_only = 1;
         } else if (strcmp(a, "--verbose") == 0) {

@@ -177,8 +177,8 @@ sudo bcm4752-init --patch /etc/bcm4752-patch.bin
 
 It is a one-shot program: it powers the receiver, runs the SEC/BRI handshake, uploads the RAM patch,
 switches the receiver to GLME mode, and exits with 0 when every step was acknowledged and 1 otherwise.
-It prints the patch pieces and a summary, or every frame with `--verbose`. It needs root because it writes `/dev/rfkill` and the serial port, and it holds nothing open
-afterwards.
+It prints the patch pieces and a summary, or every frame with `--verbose`. It needs root because it writes
+`/dev/rfkill` and the serial port; it holds nothing open afterwards.
 
 Two exit behaviours matter if a measurement client follows:
 

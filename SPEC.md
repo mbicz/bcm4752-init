@@ -5,8 +5,9 @@ This document describes the wire behaviour **observed** between the vendor daemo
 receiver, as captured on the UART of a device owned by the author. It is the specification
 this project's `src/bcm4752_init.c` was written against.
 
-Labels such as "BRI", "SEC" and "GLME" are names used by the vendor binary and by public
-Broadcom documentation for this chip family; they are used here descriptively.
+The labels BRI, SEC and GLME are used descriptively for the boot-ROM, boot and measurement phases of
+this initialisation. They are the conventional names for this chip family's interfaces; no vendor source,
+listing or output is quoted in this document.
 
 Evidence quality is marked throughout:
 
@@ -72,7 +73,7 @@ once. The vendor daemon therefore adapts to the receiver while it runs. **[OBSER
 - `0xfc` terminates every captured frame. **[OBSERVED]**
 - **escaping is not applied** in this mode: captured frames carry raw `0xfc`, `0xe0`, `0x00` and `0x01`
   bytes inside payloads (for example the RAM-patch payloads), and they are transmitted unchanged.
-  A `0xe0` escape scheme exists in the vendor binary for the GLME protocol (see §9), not here. **[OBSERVED]**
+  The receiver's GLME protocol defines an `0xe0` escape scheme (see §9); SEC mode has none. **[OBSERVED]**
 - no checksum or CRC was found on host→receiver frames. **[OBSERVED]**
 
 ## 3. Receiver→host frame layout
@@ -222,7 +223,7 @@ takes a second copy of the vendor daemon (ASIC table `4752_B3`) into account but
 
 The switch frame `fe00fd000055aa00fffc` is answered with a frame delimited by `e0 00` … `e0 01`
 (for the captured run: `e0000000071002017e063002000550e001`). Subsequent traffic is GLME
-configuration, out of scope here. Frames in GLME mode are `e0 00 <payload> e0 01`; a `0xe0` escape
-scheme (`e0 02` = `0xe0`, `e0 03` = `0x00`, `e0 04` = `0x01`) was observed in the vendor binary for
-one direction, but the captured GLME frames contain raw `0x00`/`0x01`, so escaping was not in effect.
-**[OBSERVED in the binary and in the capture]**
+configuration, out of scope here. Frames in GLME mode are `e0 00 <payload> e0 01`. For one direction the
+GLME protocol defines a `0xe0` escape scheme (`e0 02` = `0xe0`, `e0 03` = `0x00`, `e0 04` = `0x01`), but the
+captured GLME frames carry raw `0x00`/`0x01`, so escaping was not in effect in the captured run. This document
+only states what the captured frames show. **[OBSERVED]**

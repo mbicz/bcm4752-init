@@ -2,7 +2,7 @@
 """Compare bcm4752-init's planned frames against a captured vendor-daemon run.
 
     ./tests/verify_frames.py --daemon ./bcm4752-init \\
-        --patch bcm4752-patch.bin --trace uart-events.json
+        --patch bcm4752-patch.bin --trace capture.json
 
 The trace is a capture of the vendor daemon talking to the receiver (see README):
 either the JSON produced by a strace parser (a list of {"sys": "write"/"read",

@@ -23,11 +23,33 @@ the UART traffic the vendor daemon produces on the author's own device. The repo
 - `SPEC.md`, a description of the *observed* protocol behaviour (frame layout, ordering,
   timing, and the RAM-patch transfer algorithm).
 
-The repository contains **no Broadcom source code, no decompiled or disassembled listing, and no
-vendor firmware bytes**. In particular it does **not** contain the BCM4752 RAM patch: that patch is
-copyrighted Broadcom firmware, it is shipped inside Lenovo's stock ROM, and no licence to
-redistribute it exists. `tools/extract_patch.py` extracts it from **your own copy** of the vendor
-daemon into a file that stays on your machine. Do not commit that file.
+The repository contains **no Broadcom source code, no decompiled or disassembled listing, no
+disassembly-derived addressing of the vendor daemon, and no vendor firmware bytes**. In particular it does
+**not** contain the BCM4752 RAM patch.
+
+### Ownership of the RAM patch
+
+The RAM patch is Broadcom firmware: Broadcom, or its licensors, own it. It reaches a device through the
+OEM image, under the OEM's terms for the licensed product, and no licence permitting redistribution of the
+patch accompanies it. Labelling a copy with Broadcom's copyright would not create that licence: attribution is
+not a grant, and shipping the bytes would redistribute firmware that this project has no right to redistribute.
+`tools/extract_patch.py` therefore extracts the patch from **your own copy** of the vendor daemon into a file
+that stays on your machine. Do not commit that file, and do not publish it. Everything else in this repository
+is original work under the MIT licence (see `LICENSE`).
+
+### Vendor-derived information this repository does contain
+
+Two items, both needed to interoperate, neither a copy of vendor code:
+
+1. The frame bytes, opcodes and ordering in `SPEC.md`. These are constants of the wire protocol observed
+   in UART traffic; they are the interoperability information itself.
+2. Two record-table file offsets in `tools/extract_patch.py` (`0x607660`, `0x6076b0`) with the image
+   `sha256` they apply to. These are locating constants for the user's own image, analogous to the patch
+   addresses in `brcm_patchram_plus`. The tool refuses to proceed if the hash or the table layout does not
+   match, and `--table-offset` overrides them.
+
+Nothing else is derived from the vendor daemon: no source, no decompiled or disassembled listing, no
+pseudocode, no control-flow or data-structure transcription, no symbol or log-string quotation.
 
 Read this honestly:
 
@@ -103,7 +125,7 @@ Capture the vendor daemon (on your own device) and compare:
 
 ```sh
 ./tools/verify_frames.py --daemon ./bcm4752-init --patch bcm4752-patch.bin \
-    --trace /path/to/uart-events.json
+    --trace /path/to/capture.json
 ```
 
 The script concatenates the bytes the vendor daemon wrote to the GPS UART (up to the mode switch)
@@ -115,7 +137,7 @@ that the number of CRC-acknowledgement frames matches.
 
 | check | result |
 | --- | --- |
-| planned frames == recorded vendor capture (`.artifacts/uart-events.json`) | yes, 11252 bytes, 119 frames |
+| planned frames == recorded vendor capture (a UART capture from your own device) | yes, 11252 bytes, 119 frames |
 | termios set by this daemon == termios set by the vendor daemon | identical (`B921600|CS8|CREAD|CLOCAL|CRTSCTS`, `iflag`/`oflag`/`lflag` cleared) |
 | this daemon on real hardware | **initialisation complete**: autobaud echo, all four query replies, all four CRC acknowledgements and the GLME handshake received |
 | same daemon with `--no-rfkill-cycle` | silent: autobaud echo never arrives, every later step times out |

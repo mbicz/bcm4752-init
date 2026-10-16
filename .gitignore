@@ -1,0 +1,11 @@
+# Build output
+/bcm4752-init
+
+# Extracted vendor RAM patch: copyrighted Broadcom firmware, never committed.
+*.bin
+*.patch.bin
+bcm4752-patch.bin
+
+# Captures of the vendor daemon stay outside this tree.
+*.strace
+*.nmea

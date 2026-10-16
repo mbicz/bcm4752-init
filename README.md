@@ -85,6 +85,8 @@ Options:
 | `--dump-plan` | print the frames that would be sent, touch no hardware, exit |
 | `--no-power` | do not touch rfkill / runtime PM (chip already powered) |
 | `--timeout MS` | per-step response timeout (default 1000) |
+| `--burst N` | bytes of `0x80` in the autobaud burst (default 16, matching the capture) |
+| `--skip-autobaud` | omit the autobaud sync frame (one vendor capture omits it) |
 | `--hold MS` | after the mode switch, keep reading GLME frames for `MS` ms |
 | `--verbose` | log every frame and response |
 
@@ -114,13 +116,20 @@ that the number of CRC-acknowledgement frames matches.
 | this daemon on real hardware | frames transmitted, **receiver did not answer**, initialisation incomplete |
 | vendor daemon on the same device, same power sequence | works (487 NMEA sentences received) |
 
-So the frame plan is verified against a recorded, working vendor run, but the receiver does not yet
-answer this daemon on hardware. Open question: what besides the SEC frame sequence the receiver needs.
-The vendor daemon is not a fixed plan. It adapts to the receiver while it runs: a second capture of the
-same vendor daemon produced 11312 SEC bytes against this daemon's 11252, the extra 60 bytes being an extra
-data write in the middle of the patch transfer (the vendor repeats a block). A fixed plan that matches one
-recorded run does not reproduce such a retransmission, which suggests the receiver answers the vendor daemon
-but not this daemon, or that the receiver requires pacing this daemon does not reproduce.
+Variants tried on hardware, all silent: the captured 16-byte burst with the autobaud sync frame;
+`--burst 128`; `--skip-autobaud`; each with 2–3 s power-on delay and reply timeouts, and after a
+forced rfkill `1` → `0` power cycle. `strace` of those runs shows no `tcsetattr` difference from the
+vendor daemon and shows the receiver never returning a byte, so the host side matches the vendor daemon in
+framing and line settings and still the receiver stays quiet.
+
+So the frame plan is verified against a recorded, working vendor run, but the receiver does not yet answer this
+daemon on hardware. Open question: what besides the SEC frame sequence the receiver needs. The vendor daemon is not a
+fixed plan. It adapts to the receiver while it runs: a second capture of the same vendor daemon produced 11312 SEC
+bytes against this daemon's 11252, the extra 60 bytes being an extra data write in the middle of the patch transfer (the
+vendor repeats a block). A fixed plan that matches one recorded run therefore cannot reproduce such a retransmission. The
+likely reading is that the receiver answers the vendor daemon but not this daemon, or that the receiver needs inter-frame
+pacing (the vendor's 1020-byte chunks take ~190 ms each on the wire, far slower than 921600 baud allows, which is
+consistent with the receiver holding off the host). [INFERENCE]
 
 ## Files
 

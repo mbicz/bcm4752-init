@@ -28,6 +28,7 @@
 #define VERSION "0.1.0"
 
 /* Frame bytes, see SPEC.md sections 2 and 3. */
+#define WAKE_MAX          512u     /* largest autobaud burst */
 #define SEC_SOF_A        0xfeu
 #define SEC_SOF_B        0xffu
 #define SEC_CHANNEL      0x00u
@@ -408,6 +409,8 @@ static char rfkill_path[512];
 static int opt_delay_ms = 1000;
 static int opt_timeout_ms = 1000;
 static int opt_hold_ms = 0;
+static int opt_burst = 16;
+static int opt_skip_autobaud = 0;
 static int opt_no_power = 0;
 
 static int find_gps_rfkill(void)
@@ -501,12 +504,15 @@ static int initialise(void)
 {
     int rc = 0;
 
-    uint8_t wake[16];
-    memset(wake, 0x80, sizeof(wake));
-    tx(wake, sizeof(wake), "autobaud");
-    tx(AUTOBAUD_FRAME, sizeof(AUTOBAUD_FRAME), "autobaud sync");
-    if (expect(AUTOBAUD_FRAME, sizeof(AUTOBAUD_FRAME), "autobaud echo", opt_timeout_ms) < 0)
-        rc = -1;
+    uint8_t wake[WAKE_MAX];
+    size_t burst = (size_t)opt_burst;
+    memset(wake, 0x80, burst);
+    tx(wake, burst, "autobaud");
+    if (!opt_skip_autobaud) {
+        tx(AUTOBAUD_FRAME, sizeof(AUTOBAUD_FRAME), "autobaud sync");
+        if (expect(AUTOBAUD_FRAME, sizeof(AUTOBAUD_FRAME), "autobaud echo", opt_timeout_ms) < 0)
+            rc = -1;
+    }
 
     /* Query 0x0000. */
     static const uint8_t q00[] = {0xff, 0x00, 0xfd, 0x00, 0x00, 0xfc};
@@ -599,6 +605,8 @@ static void usage(void)
             "  --delay MS        delay after power-on (default 1000)\n"
             "  --timeout MS      per-step reply timeout (default 1000)\n"
             "  --hold MS         keep reading after the mode switch\n"
+            "  --burst N         bytes of 0x80 in the autobaud burst (default 16)\n"
+            "  --skip-autobaud   do not send the autobaud sync frame\n"
             "  --dump-plan       print the frames and exit; touch no hardware\n"
             "  --verbose         log every frame\n"
             "  --version         print version\n",
@@ -619,6 +627,7 @@ int main(int argc, char **argv)
         {"--delay", &opt_delay_ms},
         {"--timeout", &opt_timeout_ms},
         {"--hold", &opt_hold_ms},
+        {"--burst", &opt_burst},
     };
 
     for (int i = 1; i < argc; i++) {
@@ -636,6 +645,8 @@ int main(int argc, char **argv)
             rfkill = argv[++i];
         } else if (strcmp(a, "--no-power") == 0) {
             opt_no_power = 1;
+        } else if (strcmp(a, "--skip-autobaud") == 0) {
+            opt_skip_autobaud = 1;
         } else if (strcmp(a, "--dump-plan") == 0) {
             plan_only = 1;
         } else if (strcmp(a, "--verbose") == 0) {
@@ -657,6 +668,9 @@ int main(int argc, char **argv)
 
     if (!patch_path)
         die("--patch is required");
+
+    if (opt_burst <= 0 || opt_burst > (int)WAKE_MAX)
+        die("--burst must be between 1 and 512");
 
     load_patch(patch_path);
 

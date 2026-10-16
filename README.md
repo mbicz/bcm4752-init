@@ -82,14 +82,51 @@ Read this honestly:
 make
 ```
 
-## Extract the RAM patch from your own copy of the vendor daemon
+## Getting the vendor daemon, then extracting the RAM patch
+
+Two steps: obtain the vendor daemon **yourself**, then run the extractor on it. Neither step is scripted
+against a download this project controls; nothing here redistributes vendor bytes.
+
+### 1. Obtain the vendor daemon (6,365,320 bytes)
+
+It is `/vendor/bin/gpsd` inside the stock Android 7.1.1 system image of this tablet. The image used here:
+
+| item | value |
+| --- | --- |
+| archive | `YB1-X90F_USR_S100043_1709020000_WW08_BP_ROW-flashfiles.zip` |
+| source | Lenovo Yoga Book YB1-X90F/L stock ROM, `archive.org` item `yb-1-x-90-f-usr-s-100043-1709020000-ww-08-bp-row-flashfiles` |
+| URL | `https://archive.org/download/yb-1-x-90-f-usr-s-100043-1709020000-ww-08-bp-row-flashfiles/YB1-X90F_USR_S100043_1709020000_WW08_BP_ROW-flashfiles.zip` |
+| archive size / md5 | 2,604,209,805 B / `acebae7b235d4b91e839dd806c1211d7` |
+| `system.img` entry | stored deflated at zip offset 753,190,880, csize 1,851,016,071 |
+| decoded image | ext4, 4,026,531,840 B |
+
+Any equivalent ROM of the same model works if the daemon hash matches at the end of the steps below.
 
 ```sh
-./tools/extract_patch.py /path/to/glgps_intelx86android -o bcm4752-patch.bin
+# a) get system.img out of the archive
+unzip YB1-X90F_USR_S100043_1709020000_WW08_BP_ROW-flashfiles.zip system.img
+# b) Android sparse image -> raw ext4 (Debian: android-sdk-libsparse-utils)
+simg2img system.img system.ext4
+# c) pull the daemon out of the ext4 (Debian: e2fsprogs)
+debugfs -R 'dump /vendor/bin/gpsd /tmp/glgps_intelx86android' system.ext4
+# d) verify it is the image this project was written against
+sha256sum /tmp/glgps_intelx86android
+#   expected: d135fc515dd3802dcd9fe807b942e1e112767f56b5a44463c64121317753c715
 ```
 
-The extractor reads the patch segment table of the binary you point it at. It does not download
-anything and it contains no vendor bytes. Keep `*.bin` out of version control (see `.gitignore`).
+The 2.6 GB archive is only needed for that one entry; it can also be fetched entry-by-entry over
+HTTP `Range` instead of downloading the whole file.
+
+### 2. Extract the RAM patch
+
+```sh
+make patch IMAGE=/tmp/glgps_intelx86android
+# or: ./tools/extract_patch.py /tmp/glgps_intelx86android -o bcm4752-patch.bin
+```
+
+The extractor reads the patch segment table of the binary you point it at, checks the image hash, and
+refuses to guess if the layout does not match (`--list` prints the pieces, `--no-sha256-check` overrides the
+hash check). It contains no vendor bytes. Keep `*.bin` out of version control (see `.gitignore`).
 
 ## Run
 
@@ -117,15 +154,16 @@ Options:
 | `--verbose` | log every frame and response |
 
 `--dump-plan` is the hardware-free verification path: its output is byte-comparable with a
-capture of the vendor daemon.
+capture of the vendor daemon, and `make plan PATCH=bcm4752-patch.bin` runs it for you.
 
 ## Verification
 
 Capture the vendor daemon (on your own device) and compare:
 
 ```sh
-./tools/verify_frames.py --daemon ./bcm4752-init --patch bcm4752-patch.bin \
-    --trace /path/to/capture.json
+make test TRACE=/path/to/capture.json PATCH=bcm4752-patch.bin
+# or: ./tools/verify_frames.py --daemon ./bcm4752-init --patch bcm4752-patch.bin \
+#     --trace /path/to/capture.json
 ```
 
 The script concatenates the bytes the vendor daemon wrote to the GPS UART (up to the mode switch)

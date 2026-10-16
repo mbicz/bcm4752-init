@@ -5,7 +5,7 @@ Lenovo Yoga Book YB1-X90F (Cherry Trail / Intel Atom x5-Z8550, Android edition).
 
 It replaces the vendor daemon `glgps_intelx86android` for the *initialisation* phase only:
 
-1. power the receiver on (rfkill + runtime PM),
+1. power-cycle the receiver (rfkill block/unblock + runtime PM),
 2. bring up the UART at 921600 8N1,
 3. run the SEC/BRI boot handshake,
 4. upload the receiver RAM patch from a file **you supply**,
@@ -80,10 +80,13 @@ Options:
 | option | meaning |
 | --- | --- |
 | `--tty PATH` | serial port (default `/dev/ttyS2`) |
-| `--rfkill PATH` | rfkill device (default: auto-detect type `gps`) |
+| `--rfkill PATH` | rfkill type `gps` state file (default: auto-detect), used only without the rfkill cycle |
 | `--patch FILE` | RAM patch container produced by `tools/extract_patch.py` |
 | `--dump-plan` | print the frames that would be sent, touch no hardware, exit |
 | `--no-power` | do not touch rfkill / runtime PM (chip already powered) |
+| `--no-rfkill-cycle` | write the sysfs `state` file only (known not to power the receiver here) |
+| `--no-rfkill-restore` | leave the rfkill switch unblocked at exit |
+| `--delay MS` | delay after power-on (default 1000) |
 | `--timeout MS` | per-step response timeout (default 1000) |
 | `--burst N` | bytes of `0x80` in the autobaud burst (default 16, matching the capture) |
 | `--skip-autobaud` | omit the autobaud sync frame (one vendor capture omits it) |
@@ -114,31 +117,30 @@ that the number of CRC-acknowledgement frames matches.
 | --- | --- |
 | planned frames == recorded vendor capture (`.artifacts/uart-events.json`) | yes, 11252 bytes, 119 frames |
 | termios set by this daemon == termios set by the vendor daemon | identical (`B921600|CS8|CREAD|CLOCAL|CRTSCTS`, `iflag`/`oflag`/`lflag` cleared) |
-| this daemon on real hardware | frames transmitted, **receiver did not answer**, initialisation incomplete |
-| vendor daemon on the same device, same power sequence | works (487 NMEA sentences received) |
+| this daemon on real hardware | **initialisation complete**: autobaud echo, all four query replies, all four CRC acknowledgements and the GLME handshake received |
+| same daemon with `--no-rfkill-cycle` | silent: autobaud echo never arrives, every later step times out |
+| vendor daemon on the same device | works (324 NMEA sentences received) |
 
-Variants tried on hardware, all silent: the captured 16-byte burst with the autobaud sync frame;
-`--burst 128`; `--skip-autobaud`; `--modem-lines`; each with 2–3 s power-on delay and reply
-timeouts, and after a forced rfkill `1` → `0` power cycle. `strace` of those runs shows no `tcsetattr` difference from the
-vendor daemon and shows the receiver never returning a byte, so the host side matches the vendor daemon in
-framing and line settings and still the receiver stays quiet.
+The cause of the earlier silence was the rfkill power-up path, not the frame plan. Writing `0` to
+`/sys/class/rfkill/rfkill0/state` does not change the switch's soft-block state: after such a write the
+sysfs attributes read `state=0` but `soft=1`, so the receiver stayed powered down and never answered —
+not even the autobaud echo. The vendor daemon does not use sysfs at all here; it opens `/dev/rfkill` and
+writes `RFKILL_OP_CHANGE_ALL` for `RFKILL_TYPE_GPS` with `soft=1` and then `soft=0` 54 ms later, which
+power-cycles the receiver. This daemon does the same by default and restores `soft=1` on exit, matching the
+vendor daemon. `--no-rfkill-cycle` keeps the ineffective sysfs write and reproduces the silence, which is how
+the cause was isolated.
 
-So the frame plan is verified against a recorded, working vendor run, but the receiver does not yet answer this
-daemon on hardware. Open question: what besides the SEC frame sequence the receiver needs. The vendor daemon is not a
-fixed plan. It adapts to the receiver while it runs: a second capture of the same vendor daemon produced 11312 SEC
-bytes against this daemon's 11252, the extra 60 bytes being an extra data write in the middle of the patch transfer (the
-vendor repeats a block). A fixed plan that matches one recorded run therefore cannot reproduce such a retransmission. The
-likely reading is that the receiver answers the vendor daemon but not this daemon, or that the receiver needs inter-frame
-pacing: the vendor's writes complete at the wire rate but are spaced ~42 ms apart, so one 4096-byte piece takes ~89 ms
-end to end instead of ~47 ms, and the vendor waits for the receiver's CRC acknowledgement before the next piece while
-this daemon only waits up to its timeout. [INFERENCE]
+Earlier hardware variants that stayed silent all shared the ineffective rfkill path: the captured 16-byte burst with
+the autobaud sync frame, `--burst 128`, `--skip-autobaud`, `--modem-lines`, and a forced rfkill `1` → `0`
+sysfs power cycle. Their `strace` shows no `tcsetattr` difference from the vendor daemon, so the host framing and
+line settings were right and the receiver was simply powered down.
 
-The decisive asymmetry is in the receive direction: the vendor daemon on the same device read 214
-receiver frames (9343 bytes, the autobaud echo and every query and CRC acknowledgement), while this
-daemon's `strace` shows the receiver returning no byte at all — not even the autobaud echo the vendor
-daemon receives a few milliseconds after its burst. Everything this daemon controls (frame bytes, byte order,
-TCSETS struct, power sequence order, rfkill and runtime-PM writes) is verified identical to the vendor daemon,
-so the receiver is not answering during this daemon's session at all rather than answering with a different frame.
+The frame plan is verified against a recorded vendor run, and the receiver accepts it: every frame the receiver answers
+in the recorded run also arrives on hardware with the same acknowledgements. The vendor daemon is still not a fixed plan —
+it adapts to the receiver while it runs, and a second capture of the same vendor daemon produced 11326 SEC bytes against
+this daemon's 11252, the extra bytes being a repeated data write (60 bytes in one capture, 14 in another) in the middle
+of the patch transfer. This daemon sends each piece once, waits for the receiver's CRC acknowledgement, and proceeds after
+its timeout when the acknowledgement does not arrive; on hardware all four acknowledgements arrive. **[OBSERVED]**
 
 ## Files
 

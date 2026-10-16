@@ -54,6 +54,23 @@
 #define GLME_ESC 0xe0u
 #define GLME_EOF 0x01u
 
+/*
+ * rfkill uapi, see SPEC.md section 4. The receiver is powered down while its
+ * rfkill switch is soft-blocked, so a block followed by an unblock is the only
+ * way to power-cycle it from the host.
+ */
+#define RFKILL_TYPE_GPS     6u
+#define RFKILL_OP_CHANGE_ALL 3u
+#define RFKILL_GAP_MS       50
+
+struct rfkill_event {
+    uint32_t idx;
+    uint8_t type;
+    uint8_t op;
+    uint8_t soft;
+    uint8_t hard;
+};
+
 #define PATCH_MAGIC "BCM4752PATCH"
 
 /*
@@ -414,6 +431,8 @@ static int opt_burst = 16;
 static int opt_skip_autobaud = 0;
 static int opt_modem_lines = 0;
 static int opt_no_power = 0;
+static int opt_no_rfkill_cycle = 0;
+static int opt_no_rfkill_restore = 0;
 
 static int find_gps_rfkill(void)
 {
@@ -456,6 +475,69 @@ static void write_text(const char *path, const char *text)
     close(fd);
 }
 
+/*
+ * Set the soft block state of every rfkill switch of type GPS through the rfkill
+ * character device. Returns 0 on success, -1 if the device is unavailable.
+ */
+static int rfkill_set_soft(int fd, uint8_t soft)
+{
+    struct rfkill_event ev = {
+        .idx = 0,
+        .type = RFKILL_TYPE_GPS,
+        .op = RFKILL_OP_CHANGE_ALL,
+        .soft = soft,
+        .hard = 0,
+    };
+    ssize_t n;
+    do {
+        n = write(fd, &ev, sizeof ev);
+    } while (n < 0 && errno == EINTR);
+    return n == (ssize_t)sizeof ev ? 0 : -1;
+}
+
+static void rfkill_gap(void)
+{
+    struct timespec ts = {.tv_sec = RFKILL_GAP_MS / 1000,
+                         .tv_nsec = (long)(RFKILL_GAP_MS % 1000) * 1000000L};
+    nanosleep(&ts, NULL);
+}
+
+/* Block and then unblock the GPS switch, which power-cycles the receiver. */
+static void rfkill_power_cycle(void)
+{
+    int fd = open("/dev/rfkill", O_WRONLY);
+    if (fd < 0) {
+        warn("/dev/rfkill: %s, falling back to the sysfs state write", strerror(errno));
+        write_text(rfkill_path, "0");
+        return;
+    }
+    if (rfkill_set_soft(fd, 1) < 0)
+        warn("rfkill block: %s", strerror(errno));
+    else
+        logv("rfkill: type gps soft=1 (receiver powered down)");
+    rfkill_gap();
+    if (rfkill_set_soft(fd, 0) < 0)
+        warn("rfkill unblock: %s", strerror(errno));
+    else
+        logv("rfkill: type gps soft=0 (receiver powered up)");
+    close(fd);
+}
+
+/* Restore the RF kill switch to the blocked state the vendor daemon leaves. */
+static void rfkill_restore(void)
+{
+    int fd = open("/dev/rfkill", O_WRONLY);
+    if (fd < 0) {
+        warn("/dev/rfkill: %s, cannot restore the rfkill block", strerror(errno));
+        return;
+    }
+    if (rfkill_set_soft(fd, 1) < 0)
+        warn("rfkill restore: %s", strerror(errno));
+    else
+        logv("rfkill: type gps soft=1 restored");
+    close(fd);
+}
+
 static void power_on(const char *tty_path, int delay_ms)
 {
     char pm[512];
@@ -463,9 +545,14 @@ static void power_on(const char *tty_path, int delay_ms)
              strrchr(tty_path, '/') ? strrchr(tty_path, '/') + 1 : tty_path);
     if (find_gps_rfkill() < 0)
         die("no rfkill switch of type gps found");
-    logv("power: %s = 0, %s = on, wait %d ms", rfkill_path, pm, delay_ms);
+    logv("power: %s = on", pm);
     write_text(pm, "on");
-    write_text(rfkill_path, "0");
+    if (opt_no_rfkill_cycle) {
+        logv("power: %s = 0 (no rfkill cycle requested)", rfkill_path);
+        write_text(rfkill_path, "0");
+    } else {
+        rfkill_power_cycle();
+    }
     struct timespec ts = {.tv_sec = delay_ms / 1000, .tv_nsec = (long)(delay_ms % 1000) * 1000000L};
     nanosleep(&ts, NULL);
 }
@@ -610,6 +697,8 @@ static void usage(void)
             "  --patch FILE      RAM patch container (required to talk to hardware)\n"
             "  --rfkill PATH     rfkill state file (default: auto-detect type gps)\n"
             "  --no-power        do not power the receiver on\n"
+            "  --no-rfkill-cycle  do not block and unblock the switch, write state 0 only\n"
+            "  --no-rfkill-restore do not restore the rfkill block at exit\n"
             "  --delay MS        delay after power-on (default 1000)\n"
             "  --timeout MS      per-step reply timeout (default 1000)\n"
             "  --hold MS         keep reading after the mode switch\n"
@@ -654,6 +743,10 @@ int main(int argc, char **argv)
             rfkill = argv[++i];
         } else if (strcmp(a, "--no-power") == 0) {
             opt_no_power = 1;
+        } else if (strcmp(a, "--no-rfkill-cycle") == 0) {
+            opt_no_rfkill_cycle = 1;
+        } else if (strcmp(a, "--no-rfkill-restore") == 0) {
+            opt_no_rfkill_restore = 1;
         } else if (strcmp(a, "--skip-autobaud") == 0) {
             opt_skip_autobaud = 1;
         } else if (strcmp(a, "--modem-lines") == 0) {
@@ -710,6 +803,9 @@ int main(int argc, char **argv)
             print_hex("glme ", buf, (size_t)n);
         }
     }
+
+    if (!opt_no_power && !opt_no_rfkill_cycle && !opt_no_rfkill_restore)
+        rfkill_restore();
 
     if (rc == 0)
         fprintf(stderr, "%s: initialisation complete\n", prog);

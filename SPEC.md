@@ -20,12 +20,33 @@ Evidence quality is marked throughout:
 | port | `/dev/ttyS2` (vendor config name `/dev/gps/ttyGPS`) | [OBSERVED] |
 | line settings | 921600 baud, 8 data bits, no parity, 1 stop bit, CRTSCTS | [OBSERVED] |
 | initial settings before reconfiguration | 9600 baud 8N1 (`TCGETS`), then `TCSETS` to 921600, buffer flush before and after | [OBSERVED] |
-| rfkill switch | one entry of type `gps`, name `BCM4752:00`, set to `state=0` (unblocked) | [OBSERVED] |
 | serial runtime PM | `/sys/class/tty/ttyS2/device/power/control` set to `on` | [OBSERVED] |
+| rfkill switch | one entry of type `gps`, name `BCM4752:00`, soft-blocked then unblocked through `/dev/rfkill` | [OBSERVED] |
 | delay after power-on | 1000 ms in the stock launcher; vendor configuration states 130 ms | [OBSERVED] |
 
-The vendor daemon itself does **not** touch rfkill in the captured run: power was already applied by
-the launcher. This project's daemon therefore performs the power sequence itself unless `--no-power` is given.
+### rfkill
+
+`rfkill` is not cosmetic here: writing `soft=0` to `/sys/class/rfkill/rfkill0/state` leaves the
+switch reporting `soft=1`, so the receiver stays powered down and answers nothing. The vendor daemon
+instead opens `/dev/rfkill` and writes two 8-byte `struct rfkill_event` records with
+`op = RFKILL_OP_CHANGE_ALL (3)`, `type = RFKILL_TYPE_GPS (6)`:
+
+| offset | field | value |
+| --- | --- | --- |
+| 0 | `idx` | 0 (ignored for `CHANGE_ALL`) |
+| 4 | `type` | 6, `RFKILL_TYPE_GPS` |
+| 5 | `op` | 3, `RFKILL_OP_CHANGE_ALL` |
+| 6 | `soft` | 1, then 0 (`hard` stays 0) |
+
+The two writes are 54 ms apart in the capture; the unblock happens 140 ms before the UART is opened.
+The block followed by the unblock power-cycles the receiver. On exit, the vendor daemon writes
+`soft=1` again, which is the state this implementation restores unless `--no-rfkill-restore` is given.
+
+`--no-rfkill-cycle` falls back to the single sysfs write and is **known not to work** on this device:
+it leaves the receiver powered down, the autobaud echo never arrives and every later step times out.
+The option exists only to demonstrate the cause; the default is the rfkill cycle. **[OBSERVED]**
+
+`src/bcm4752_init.c` sets the line settings to exactly the captured `TCSETS` values:
 
 `src/bcm4752_init.c` sets the line settings to exactly the captured `TCSETS` values:
 `B921600|CS8|CREAD|CLOCAL|CRTSCTS` with `c_iflag`, `c_oflag` and `c_lflag` cleared. Verified against

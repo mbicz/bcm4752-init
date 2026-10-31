@@ -65,7 +65,9 @@ def trace_io(path):
         return writes, reads
 
     writes, reads = [], []
-    call = re.compile(r'^\d+\s+[\d:.]+ (read|write)\((\d+)<([^>]*)>, "(.*?)", (\d+)\) = (\d+)\s*$')
+    # The fd annotation can itself contain '>', e.g. "<char 4:66>>" when
+    # strace prints both the path and the device, so match it greedily.
+    call = re.compile(r'^\d+\s+[\d:.]+ (read|write)\((\d+)<(.*)>, "(.*?)", (\d+)\) = (\d+)\s*$')
     for line in open(path, errors="replace"):
         m = call.match(line.rstrip("\n"))
         if not m or not is_gps_fd(m.group(3)):
